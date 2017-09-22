@@ -2,6 +2,7 @@
 from zope.interface import implementer
 from datetime import timedelta, datetime
 from iso8601 import parse_date
+from decimal import Decimal
 from pyramid.security import Allow
 from schematics.types import StringType, FloatType, IntType, URLType, BooleanType
 from schematics.types.compound import ModelType
@@ -17,7 +18,8 @@ from openprocurement.api.validation import (
 )
 from openprocurement.api.models import (
     Value, Model, SifterListType,
-    ListType, Period, Address, PeriodEndRequired
+    ListType, Period, Address, PeriodEndRequired,
+    DecimalType
 )
 from openprocurement.api.models import (
     plain_role, listing_role,
@@ -73,6 +75,10 @@ from openprocurement.tender.openeu.constants import (
     TENDERING_DURATION, QUESTIONS_STAND_STILL, TENDERING_DAYS
 )
 from openprocurement.tender.esco.utils import calculate_npv
+
+
+def to_decimal(fraction):
+    return Decimal(fraction.numerator) / Decimal(fraction.denominator)
 
 
 class IESCOTender(IAboveThresholdEUTender):
@@ -161,25 +167,25 @@ class ESCOValue(Value):
             'auction_view': whitelist('amountPerfomance', 'yearlyPaymentsPercentage', 'annualCostsReduction', 'contractDuration', 'currency', 'valueAddedTaxIncluded'),
             'auction_post': whitelist('yearlyPaymentsPercentage', 'contractDuration'),
         }
-    amount = FloatType(min_value=0, required=False)  # Calculated energy service contract value.
-    amountPerfomance = FloatType(required=False)  # Calculated energy service contract performance indicator
+    amount = DecimalType(min_value=0, required=False, precision=-2)  # Calculated energy service contract value.
+    amountPerfomance = DecimalType(required=False, precision=-2)  # Calculated energy service contract performance indicator
     yearlyPaymentsPercentage = FloatType(required=True)  # The percentage of annual payments in favor of Bidder
     annualCostsReduction = ListType(FloatType, required=True)  # Buyer's annual costs reduction
     contractDuration = ModelType(ContractDuration, required=True)
 
-    @serializable(serialized_name='amountPerfomance')
+    @serializable(serialized_name='amountPerfomance', type=DecimalType())
     def amountPerfomance_npv(self):
         """ Calculated energy service contract perfomance indicator """
-        return float(npv(self.contractDuration.years,
+        return to_decimal(npv(self.contractDuration.years,
                          self.contractDuration.days,
                          self.yearlyPaymentsPercentage,
                          self.annualCostsReduction,
                          get_tender(self).__class__.announcementDate or get_tender(self).enquiryPeriod.startDate,
                          get_tender(self).NBUdiscountRate))
 
-    @serializable(serialized_name='amount')
+    @serializable(serialized_name='amount', type=DecimalType())
     def amount_escp(self):
-        return float(escp(self.contractDuration.years,
+        return to_decimal(escp(self.contractDuration.years,
                           self.contractDuration.days,
                           self.yearlyPaymentsPercentage,
                           self.annualCostsReduction,
@@ -334,7 +340,7 @@ class Tender(BaseTender):
     qualificationPeriod = ModelType(Period)
     status = StringType(choices=['draft', 'active.tendering', 'active.pre-qualification', 'active.pre-qualification.stand-still', 'active.auction',
                                  'active.qualification', 'active.awarded', 'complete', 'cancelled', 'unsuccessful'], default='active.tendering')
-    NBUdiscountRate = FloatType(required=True, min_value=0, max_value=0.99)
+    NBUdiscountRate = FloatType(required=True, min_value=0, max_value=1)
     fundingKind = StringType(choices=['budget', 'other'], required=True, default='other')
     yearlyPaymentsPercentageRange = FloatType(required=True, default=0.8, min_value=0, max_value=1)
     submissionMethodDetails = StringType(default="quick(mode:no-auction)")  # TODO: temporary decision, while esco auction is not ready. Remove after adding auction. Remove function "check_submission_method_details" in openprocurement.tender.esco.subscribers
